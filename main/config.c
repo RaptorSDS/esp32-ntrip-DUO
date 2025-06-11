@@ -35,6 +35,22 @@
 #include <rom/gpio.h>
 #endif
 
+#ifdef CONFIG_IDF_TARGET_ESP32C3
+// ESP32-C3 GPIO Mapping (nur GPIO 0-21 verfügbar)
+#define UART_TX_PIN     GPIO_NUM_21  // Statt GPIO_NUM_1
+#define UART_RX_PIN     GPIO_NUM_20  // Statt GPIO_NUM_3  
+#define LED_PIN         GPIO_NUM_2   // Statt GPIO_NUM_14
+#define STATUS_PIN      GPIO_NUM_10  // Statt GPIO_NUM_33
+#else
+// Original ESP32 GPIO Pins
+#define UART_TX_PIN     GPIO_NUM_1
+#define UART_RX_PIN     GPIO_NUM_3
+#define LED_PIN         GPIO_NUM_14
+#define STATUS_PIN      GPIO_NUM_33
+#endif
+
+
+
 #include <uart.h>
 #include <tasks.h>
 #include "config.h"
@@ -185,19 +201,19 @@ const config_item_t CONFIG_ITEMS[] = {
         }, {
                 .key = KEY_CONFIG_UART_TX_PIN,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = GPIO_NUM_1
+                .def.uint8 = UART_TX_PIN
         }, {
                 .key = KEY_CONFIG_UART_RX_PIN,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = GPIO_NUM_3
+                .def.uint8 = UART_RX_PIN
         }, {
                 .key = KEY_CONFIG_UART_RTS_PIN,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = GPIO_NUM_14
+                .def.uint8 = LED_PIN
         }, {
                 .key = KEY_CONFIG_UART_CTS_PIN,
                 .type = CONFIG_ITEM_TYPE_UINT8,
-                .def.uint8 = GPIO_NUM_33
+                .def.uint8 = STATUS_PIN
         }, {
                 .key = KEY_CONFIG_UART_BAUD_RATE,
                 .type = CONFIG_ITEM_TYPE_UINT32,
