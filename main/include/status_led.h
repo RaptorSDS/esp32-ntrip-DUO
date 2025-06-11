@@ -11,7 +11,7 @@ typedef enum {
     STATUS_LED_STATIC = 0,
     STATUS_LED_FLASH,
     STATUS_LED_FADE,
-    STATUS_LED_BLINK = STATUS_LED_FLASH  // Alias für Rückwärtskompatibilität
+    STATUS_LED_BLINK = STATUS_LED_FLASH  // Alias für Kompatibilität
 } status_led_flashing_mode_t;
 
 // Status LED color structure
@@ -66,8 +66,19 @@ void sleep_led_fade(uint8_t value, int max_fade_time_ms);
 const char* status_led_get_chip_info(void);
 void status_led_get_gpio_info(status_led_gpio_info_t *info);
 void status_led_test_sequence(void);
+void status_led_print_config(void);
 
-// Backward compatibility macros
-#define STATUS_LED_BLINK STATUS_LED_FLASH
+// Color helper macros
+#define LED_COLOR_RED     0xFF000000
+#define LED_COLOR_GREEN   0x00FF0000
+#define LED_COLOR_BLUE    0x0000FF00
+#define LED_COLOR_WHITE   0xFFFFFF00
+#define LED_COLOR_YELLOW  0xFFFF0000
+#define LED_COLOR_CYAN    0x00FFFF00
+#define LED_COLOR_MAGENTA 0xFF00FF00
+#define LED_COLOR_OFF     0x00000000
+
+// Convenience macros
+#define LED_RGB(r,g,b) (((uint32_t)(r) << 24) | ((uint32_t)(g) << 16) | ((uint32_t)(b) << 8))
 
 #endif // STATUS_LED_H
