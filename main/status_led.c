@@ -1,235 +1,38 @@
-/*
- * This file is part of the ESP32-XBee distribution (https://github.com/nebkat/esp32-xbee).
- * Copyright (c) 2019 Nebojsa Cvetkovic.
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, version 3.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- */
+    // Configure LED channels
+    configure_ledc_channel(STATUS_LED_RED_CHANNEL, STATUS_LED_RED_GPIO, 255);
+    configure_ledc_channel(STATUS_LED_GREEN_CHANNEL, STATUS_LED_GREEN_GPIO, 255);
+    configure_ledc_channel(STATUS_LED_BLUE_CHANNEL, STATUS_LED_BLUE_GPIO, 255);
+    configure_ledc_channel(STATUS_LED_SLEEP_CHANNEL, STATUS_LED_SLEEP_GPIO, 255);
+    configure_ledc_channel(STATUS_LED_RSSI_CHANNEL, STATUS_LED_RSSI_GPIO, 0);
+    configure_ledc_channel(STATUS_LED_ASSOC_CHANNEL, STATUS_LED_ASSOC_GPIO, 0);
 
-#include <driver/ledc.h>
-#include <tasks.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "freertos/semphr.h"
-
-#if defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
-#include "freertos/xtensa_api.h"
-#define HAS_XTENSA_API 1
-#else
-#define HAS_XTENSA_API 0
-#endif
-
-// Dann in den Funktionen:
-void some_function() {
-#if HAS_XTENSA_API
-    // Xtensa-spezifischer Code
-    xt_wdt_disable();
-#else
-    // RISC-V Alternative oder leer lassen
-#endif
-}
-
-#include "freertos/portmacro.h"
-#include "status_led.h"
-#include <sys/queue.h>
-
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-#define LEDC_SPEED_MODE LEDC_LOW_SPEED_MODE
-#else
-#define LEDC_SPEED_MODE LEDC_HIGH_SPEED_MODE
-#endif
-
-// GPIO-Pins für Status LEDs
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-// ESP32-C3 GPIO Mapping (nur GPIO 0-21 verfügbar)
-#define STATUS_LED_GREEN_GPIO GPIO_NUM_3   // Grüne LED
-#define STATUS_LED_BLUE_GPIO  GPIO_NUM_4   // Blaue LED
-#define STATUS_LED_RED_GPIO   GPIO_NUM_5   // Rote LED (falls verwendet)
-#define STATUS_LED_SLEEP_GPIO GPIO_NUM_6   // Sleep LED
-#define STATUS_LED_ASSOC_GPIO GPIO_NUM_7   // Association LED
-#else
-// Original ESP32 GPIO Pins
-#define STATUS_LED_GREEN_GPIO GPIO_NUM_22
-#define STATUS_LED_BLUE_GPIO  GPIO_NUM_23
-#define STATUS_LED_RED_GPIO   GPIO_NUM_26  // Falls verwendet
-#define STATUS_LED_SLEEP_GPIO GPIO_NUM_27
-#define STATUS_LED_ASSOC_GPIO GPIO_NUM_25
-#endif
-
-#define STATUS_LED_FREQ 1000
-
-static SLIST_HEAD(status_led_color_list_t, status_led_color_t) status_led_colors_list;
-
-static TaskHandle_t led_task;
-
-void status_led_clear() {
-
-}
-
-status_led_handle_t status_led_add(uint32_t rgba, status_led_flashing_mode_t flashing_mode, uint32_t interval, uint32_t duration, uint8_t expire) {
-    uint8_t red = (rgba >> 24u) & 0xFFu;
-    uint8_t green = (rgba >> 16u) & 0xFFu;
-    uint8_t blue = (rgba >> 8u) & 0xFFu;
-    uint8_t alpha = rgba & 0xFFu;
-
-    status_led_handle_t color = calloc(1, sizeof(struct status_led_color_t));
-    color->red = (red * alpha) / 0xFF;
-    color->green = (green * alpha) / 0xFF;
-    color->blue = (blue * alpha) / 0xFF;
-
-    color->flashing_mode = flashing_mode;
-    color->interval = interval;
-    color->duration = duration;
-    color->expire = expire;
-
-    color->active = true;
-
-    // Insert at tail
-    if (SLIST_EMPTY(&status_led_colors_list)) {
-        SLIST_INSERT_HEAD(&status_led_colors_list, color, next);
-    } else {
-        status_led_handle_t current, next;
-        SLIST_FOREACH_SAFE(current, &status_led_colors_list, next, next) {
-            if (next == NULL) {
-                SLIST_INSERT_AFTER(current, color, next);
-            }
-        }
+    // Install fade function
+    err = ledc_fade_func_install(0);
+    if (err != ESP_OK) {
+        // Handle fade function installation error
+        // Continue anyway as basic functionality will still work
     }
 
-    vTaskResume(led_task);
-
-    return color;
-}
-
-void status_led_remove(status_led_handle_t color) {
-    if (color == NULL) return;
-    color->remove = true;
-}
-
-static void status_led_channel_set(ledc_channel_t channel, uint8_t value) {
-    ledc_set_duty(LEDC_SPEED_MODE, channel, value);
-    ledc_update_duty(LEDC_SPEED_MODE, channel);
-}
-
-static void status_led_set(uint8_t red, uint8_t green, uint8_t blue) {
-    status_led_channel_set(STATUS_LED_RED_CHANNEL, 0xFF - red);
-    status_led_channel_set(STATUS_LED_GREEN_CHANNEL, 0xFF - green);
-    status_led_channel_set(STATUS_LED_BLUE_CHANNEL, 0xFF - blue);
-}
-
-static void status_led_channel_fade(ledc_channel_t channel, uint8_t value, int max_fade_time_ms) {
-    ledc_set_fade_with_time(LEDC_SPEED_MODE, channel, value, max_fade_time_ms);
-    ledc_fade_start(LEDC_SPEED_MODE, channel, LEDC_FADE_NO_WAIT);
-}
-
-static void status_led_fade(uint8_t red, uint8_t green, uint8_t blue, int max_fade_time_ms) {
-    status_led_channel_fade(STATUS_LED_RED_CHANNEL, 0xFF - red, max_fade_time_ms);
-    status_led_channel_fade(STATUS_LED_GREEN_CHANNEL, 0xFF - green, max_fade_time_ms);
-    status_led_channel_fade(STATUS_LED_BLUE_CHANNEL, 0xFF - blue, max_fade_time_ms);
-}
-
-static void status_led_show(status_led_handle_t color) {
-    if (color->flashing_mode == STATUS_LED_STATIC) {
-        status_led_set(color->red, color->green, color->blue);
-
-        vTaskDelay(pdMS_TO_TICKS(color->duration));
-    } else {
-        bool fade = color->flashing_mode == STATUS_LED_FADE;
-        bool active = true;
-        for (unsigned int i = 0; i < color->duration / color->interval; i++, active = !active) {
-            uint8_t red = active ? color->red : 0;
-            uint8_t green = active ? color->green : 0;
-            uint8_t blue = active ? color->blue : 0;
-            if (fade) {
-                status_led_fade(red, green, blue, color->interval / 2);
-            } else {
-                status_led_set(red, green, blue);
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(color->interval));
-        }
-    }
-
-    // Turn off all LEDs
+    // Turn off all LEDs initially
     status_led_set(0, 0, 0);
-}
+    rssi_led_set(0);
+    assoc_led_set(0);
+    sleep_led_set(0);
 
-static void status_led_task() {
-    while (true) {
-        // Wait for a color
-        if (SLIST_EMPTY(&status_led_colors_list)) vTaskSuspend(NULL);
-
-        status_led_handle_t color, color_tmp;
-        SLIST_FOREACH_SAFE(color, &status_led_colors_list, next, color_tmp) {
-            // Marked for removal
-            if (color->remove) {
-                SLIST_REMOVE(&status_led_colors_list, color, status_led_color_t, next);
-                free(color);
-                continue;
-            }
-
-            // Show color
-            if (color->active) status_led_show(color);
-        }
+    // Create LED task
+    BaseType_t task_result = xTaskCreate(
+        status_led_task, 
+        "status_led", 
+        2048, 
+        NULL, 
+        TASK_PRIORITY_STATUS_LED, 
+        &led_task
+    );
+    
+    if (task_result != pdPASS) {
+        // Handle task creation error
+        led_task = NULL;
     }
-}
-
-void status_led_init() {
-    ledc_timer_config_t ledc_timer = {
-            .duty_resolution = LEDC_TIMER_8_BIT,
-            .freq_hz = STATUS_LED_FREQ,
-            .speed_mode = LEDC_SPEED_MODE,
-            .timer_num = LEDC_TIMER_0,
-            .clk_cfg = LEDC_AUTO_CLK,
-    };
-
-    ledc_timer_config(&ledc_timer);
-
-    ledc_channel_config_t ledc_config = {
-            .duty = 255,
-            .speed_mode = LEDC_SPEED_MODE,
-            .hpoint = 0,
-            .timer_sel = LEDC_TIMER_0
-    };
-
-    ledc_config.channel = STATUS_LED_RED_CHANNEL;
-    ledc_config.gpio_num = STATUS_LED_RED_GPIO;
-    ledc_channel_config(&ledc_config);
-
-    ledc_config.channel = STATUS_LED_GREEN_CHANNEL;
-    ledc_config.gpio_num = STATUS_LED_GREEN_GPIO;
-    ledc_channel_config(&ledc_config);
-
-    ledc_config.channel = STATUS_LED_BLUE_CHANNEL;
-    ledc_config.gpio_num = STATUS_LED_BLUE_GPIO;
-    ledc_channel_config(&ledc_config);
-
-    ledc_config.channel = STATUS_LED_SLEEP_CHANNEL;
-    ledc_config.gpio_num = STATUS_LED_SLEEP_GPIO;
-    ledc_channel_config(&ledc_config);
-
-    ledc_config.duty = 0;
-    ledc_config.channel = STATUS_LED_RSSI_CHANNEL;
-    ledc_config.gpio_num = STATUS_LED_RSSI_GPIO;
-    ledc_channel_config(&ledc_config);
-
-    ledc_config.channel = STATUS_LED_ASSOC_CHANNEL;
-    ledc_config.gpio_num = STATUS_LED_ASSOC_GPIO;
-    ledc_channel_config(&ledc_config);
-
-    ledc_fade_func_install(0);
-
-    xTaskCreate(status_led_task, "status_led", 2048, NULL, TASK_PRIORITY_STATUS_LED, &led_task);
 }
 
 void rssi_led_set(uint8_t value) {
@@ -254,4 +57,86 @@ void sleep_led_set(uint8_t value) {
 
 void sleep_led_fade(uint8_t value, int max_fade_time_ms) {
     status_led_channel_fade(STATUS_LED_SLEEP_CHANNEL, 0xFF - value, max_fade_time_ms);
+}
+
+// Additional utility functions for better ESP32 variant support
+
+const char* status_led_get_chip_info(void) {
+#if defined(CHIP_ESP32_CLASSIC)
+    return "ESP32 Classic";
+#elif defined(CHIP_ESP32_S2)
+    return "ESP32-S2";
+#elif defined(CHIP_ESP32_S3)
+    return "ESP32-S3";
+#elif defined(CHIP_ESP32_C3)
+    return "ESP32-C3";
+#elif defined(CHIP_ESP32_C2)
+    return "ESP32-C2";
+#elif defined(CHIP_ESP32_C6)
+    return "ESP32-C6";
+#elif defined(CHIP_ESP32_H2)
+    return "ESP32-H2";
+#else
+    return "Unknown ESP32";
+#endif
+}
+
+void status_led_get_gpio_info(status_led_gpio_info_t *info) {
+    if (info == NULL) return;
+    
+    info->red_gpio = STATUS_LED_RED_GPIO;
+    info->green_gpio = STATUS_LED_GREEN_GPIO;
+    info->blue_gpio = STATUS_LED_BLUE_GPIO;
+    info->sleep_gpio = STATUS_LED_SLEEP_GPIO;
+    info->rssi_gpio = STATUS_LED_RSSI_GPIO;
+    info->assoc_gpio = STATUS_LED_ASSOC_GPIO;
+    info->has_high_speed_mode = HAS_HIGH_SPEED_MODE;
+}
+
+// Test function to verify LED functionality
+void status_led_test_sequence(void) {
+    // Test Red LED
+    status_led_add(0xFF0000FF, STATUS_LED_STATIC, 0, 500, 1);
+    vTaskDelay(pdMS_TO_TICKS(600));
+    
+    // Test Green LED
+    status_led_add(0x00FF00FF, STATUS_LED_STATIC, 0, 500, 1);
+    vTaskDelay(pdMS_TO_TICKS(600));
+    
+    // Test Blue LED
+    status_led_add(0x0000FFFF, STATUS_LED_STATIC, 0, 500, 1);
+    vTaskDelay(pdMS_TO_TICKS(600));
+    
+    // Test White LED (all colors)
+    status_led_add(0xFFFFFFFF, STATUS_LED_STATIC, 0, 500, 1);
+    vTaskDelay(pdMS_TO_TICKS(600));
+    
+    // Test Fade
+    status_led_add(0xFF00FFFF, STATUS_LED_FADE, 200, 2000, 1);
+    vTaskDelay(pdMS_TO_TICKS(2100));
+    
+    // Test Flash
+    status_led_add(0x00FFFFFF, STATUS_LED_FLASH, 100, 1000, 1);
+    vTaskDelay(pdMS_TO_TICKS(1100));
+}
+
+// Cleanup function
+void status_led_deinit(void) {
+    // Stop and delete task
+    if (led_task != NULL) {
+        vTaskDelete(led_task);
+        led_task = NULL;
+    }
+    
+    // Clear all colors
+    status_led_clear();
+    
+    // Turn off all LEDs
+    status_led_set(0, 0, 0);
+    rssi_led_set(0);
+    assoc_led_set(0);
+    sleep_led_set(0);
+    
+    // Uninstall fade function
+    ledc_fade_func_uninstall();
 }
