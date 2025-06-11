@@ -20,6 +20,8 @@
 #include <esp_log.h>
 #include <string.h>
 #include <driver/uart.h>
+#include "driver/gpio.h"
+#include "hal/gpio_types.h"
 #include <esp_wifi_types.h>
 
 // GPIO Header
