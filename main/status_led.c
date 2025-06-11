@@ -21,7 +21,24 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+
+#if defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
 #include "freertos/xtensa_api.h"
+#define HAS_XTENSA_API 1
+#else
+#define HAS_XTENSA_API 0
+#endif
+
+// Dann in den Funktionen:
+void some_function() {
+#if HAS_XTENSA_API
+    // Xtensa-spezifischer Code
+    xt_wdt_disable();
+#else
+    // RISC-V Alternative oder leer lassen
+#endif
+}
+
 #include "freertos/portmacro.h"
 #include "status_led.h"
 #include <sys/queue.h>
